@@ -6,5 +6,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y libssl-dev libsqlite3-dev
-      - run: cmake -S server -B build && cmake --build build -j
+      - run: cmake -B build && cmake --build build -j
       - run: python3 -m unittest discover -s tests -v
