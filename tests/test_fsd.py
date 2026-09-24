@@ -153,6 +153,23 @@ class FsdTest(Network):
         for x in (atc, a, b, far):
             x.close()
 
+    def test_controller_coordination(self):
+        twr = self.atc("UUEE_TWR", 1000003, "pw3")
+        ctr = self.atc("UUWV_CTR", 1000004, "pw4")
+        pilot = self.pilot("AFL600", 1000001, "pw1")
+        # Shared data goes to every other controller, never to pilots.
+        twr.send("$CQUUEE_TWR:@94835:IT:AFL600")
+        self.assertEqual(ctr.expect("$CQ"), "$CQUUEE_TWR:@94835:IT:AFL600")
+        pilot.send("$CQAFL600:@94835:IT:AFL600")
+        self.assertIn(":011:", pilot.expect("$ER"))
+        # Handoff and its acceptance are point-to-point.
+        twr.send("$HOUUEE_TWR:UUWV_CTR:AFL600")
+        self.assertEqual(ctr.expect("$HO"), "$HOUUEE_TWR:UUWV_CTR:AFL600")
+        ctr.send("$HAUUWV_CTR:UUEE_TWR:AFL600")
+        self.assertEqual(twr.expect("$HA"), "$HAUUWV_CTR:UUEE_TWR:AFL600")
+        for x in (twr, ctr, pilot):
+            x.close()
+
     def test_ping(self):
         a = self.pilot("AFL500", 1000001, "pw1")
         a.send("$PIAFL500:SERVER:42")
