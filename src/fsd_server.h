@@ -40,6 +40,8 @@ struct Conn {
     bool has_pos = false;
     double lat = 0, lon = 0;
     int alt = 0, gs = 0;
+    int heading = -1;  // degrees, from the position packet's PBH field; -1 until known
+    bool on_ground = false;
     std::string squawk = "2000", transponder = "S";
     double frequency = 0;  // ATC primary frequency in MHz
     int facility = 0, vis_range = 0;

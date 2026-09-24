@@ -179,7 +179,7 @@ class FsdTest(Network):
         atc.send("%UUEE_TWR:18100:4:50:4:55.97:37.41:0")
         a = self.pilot("AFL200", 1000001, "pw1")
         b = self.pilot("SBI300", 1000002, "pw2")
-        a.send("@N:AFL200:2000:1:55.98:37.40:3000:180:0:0")
+        a.send("@N:AFL200:2000:1:55.98:37.40:3000:180:3074:0")  # PBH: heading 270, on the ground
         self.assertTrue(atc.expect("@").startswith("@N:AFL200:"))
         b.send("@N:SBI300:2000:1:55.99:37.42:5000:200:0:0")
         self.assertTrue(a.expect("@").startswith("@N:SBI300:"))
@@ -206,6 +206,8 @@ class FsdTest(Network):
         callsigns = {p["callsign"] for p in feed["pilots"]}
         self.assertTrue({"AFL200", "SBI300", "UTA400"} <= callsigns)
         self.assertEqual(feed["controllers"][0]["frequency"], "118.100")
+        afl = next(p for p in feed["pilots"] if p["callsign"] == "AFL200")
+        self.assertEqual((afl["heading"], afl["on_ground"]), (270, True))
 
         b.send("#DPSBI300:1000002")
         self.assertEqual(a.expect("#DP"), "#DPSBI300:1000002")

@@ -344,6 +344,17 @@ void FsdServer::handle_packet(Conn& c, const std::string& head, const std::vecto
             return send_error(c, ERR_SYNTAX, "", "Invalid position");
         c.has_pos = true;
         c.lat = lat, c.lon = lon, c.alt = alt, c.gs = gs;
+        // PBH packs pitch, bank and heading (10 bits each) with the on-ground flag; some clients send it signed.
+        if (f.size() > 8) {
+            char* end = nullptr;
+            errno = 0;
+            long long v = std::strtoll(f[8].c_str(), &end, 10);
+            if (!f[8].empty() && !*end && !errno) {
+                uint32_t pbh = static_cast<uint32_t>(v);
+                c.heading = static_cast<int>(std::lround(((pbh >> 2) & 0x3FF) * 360.0 / 1024.0)) % 360;
+                c.on_ground = (pbh >> 1) & 1;
+            }
+        }
         c.transponder = f[0].substr(0, 1);
         c.squawk = f[2].substr(0, 4);
         broadcast_near(c, raw);
@@ -635,6 +646,8 @@ std::string FsdServer::data_feed_json() const {
         if (c.has_pos) o += ",\"latitude\":" + fmt_double(c.lat) + ",\"longitude\":" + fmt_double(c.lon);
         if (c.role == Role::Pilot) {
             o += ",\"altitude\":" + std::to_string(c.alt) + ",\"groundspeed\":" + std::to_string(c.gs) +
+                 ",\"heading\":" + (c.heading >= 0 ? std::to_string(c.heading) : std::string("null")) +
+                 ",\"on_ground\":" + std::string(c.on_ground ? "true" : "false") +
                  ",\"transponder\":" + json_str(c.squawk) + ",\"flight_plan\":" +
                  (c.flightplan.empty() ? "null" : json_str(c.flightplan)) + "}";
             pilots += (pilots.empty() ? "" : ",") + o;
