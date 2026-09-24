@@ -29,12 +29,14 @@ class Network(unittest.TestCase):
         cls.db = os.path.join(cls.tmp.name, "test.db")
         admin = os.path.join(BUILD, "skynet-admin")
         for args in (["1000001", "Pilot One", "pw1"], ["1000002", "Pilot Two", "pw2"],
-                     ["1000003", "Controller", "pw3", "S3"], ["1000004", "Supervisor", "pw4", "SUP"]):
+                     ["1000003", "Controller", "pw3", "S3"], ["1000004", "Supervisor", "pw4", "SUP"],
+                     ["1000005", "Rule Breaker", "pw5"], ["1000006", "Demoted Controller", "pw6", "C1"]):
             subprocess.run([admin, "--db", cls.db, "adduser", *args], check=True, capture_output=True)
         cls.port, cls.http_port = free_port(), free_port()
         cls.procs = [
             subprocess.Popen([os.path.join(BUILD, "skynet-fsd"), "--db", cls.db, "--host", "127.0.0.1",
-                              "--port", str(cls.port), "--http-port", str(cls.http_port)],
+                              "--port", str(cls.port), "--http-port", str(cls.http_port),
+                              "--account-check", "1"],
                              stderr=subprocess.DEVNULL),
         ]
         for _ in range(50):
@@ -91,6 +93,35 @@ class FsdTest(Network):
         c = FsdClient(self.port)
         c.send(f"#AA{cs}:SERVER:Test Controller:{cid}:{pw}:{rating}:100")
         return c
+
+    def admin(self, *args):
+        subprocess.run([os.path.join(BUILD, "skynet-admin"), "--db", self.db, *args], check=True, capture_output=True)
+
+    def test_suspension_disconnects_and_blocks_login(self):
+        c = self.pilot("SUS1", 1000005, "pw5")
+        self.admin("suspend", "1000005")
+        self.assertEqual(c.expect("$ER"), "$ERserver:SUS1:013:SUS1:CID suspended")
+        with self.assertRaises(ConnectionError):
+            c.expect("never")
+        c.close()
+        again = FsdClient(self.port)
+        again.send("#APSUS2:SERVER:1000005:pw5:1:100:1:Test Pilot")
+        self.assertIn(":013:SUS2:CID suspended", again.recv())
+        again.close()
+        # A wrong password still says only "invalid", never "suspended".
+        wrong = FsdClient(self.port)
+        wrong.send("#APSUS3:SERVER:1000005:nope:1:100:1:Test Pilot")
+        self.assertIn(":006:", wrong.recv())
+        wrong.close()
+        self.admin("unsuspend", "1000005")
+        self.pilot("SUS4", 1000005, "pw5").close()
+
+    def test_lowered_rating_disconnects_controller(self):
+        c = self.atc("DEMO_APP", 1000006, "pw6", 5)
+        self.admin("rating", "1000006", "S2")
+        self.assertIn(":011:", c.expect("$ER"))
+        c.close()
+        self.admin("rating", "1000006", "C1")
 
     def test_bad_password(self):
         c = FsdClient(self.port)

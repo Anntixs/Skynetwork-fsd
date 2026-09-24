@@ -16,6 +16,9 @@ struct FsdConfig {
     uint16_t http_port = 8080;
     std::string server_name = "SKYNET";
     std::vector<std::string> motd = {"Welcome to SkyNetwork!"};
+    // How often connected members are re-checked against the database: a member suspended (or an
+    // ATC whose rating was lowered) on the website is disconnected within this time.
+    int account_check_ms = 10000;
 };
 
 enum class Role { None, Pilot, Atc };
@@ -72,12 +75,14 @@ private:
     bool in_range(const Conn& a, const Conn& b) const;
     Conn* find(const std::string& callsign);
     void drop(Conn& c, bool announce = true);
+    void check_accounts();
     std::string data_feed_json() const;
 
     Accounts& accounts_;
     FsdConfig cfg_;
     int listen_fd_ = -1, http_fd_ = -1;
     bool running_ = true;
+    int64_t next_account_check_ms_ = 0;
     std::map<int, std::unique_ptr<Conn>> conns_;
 };
 

@@ -169,6 +169,10 @@ void FsdServer::run() {
 
         // Timeouts and cleanup.
         int64_t now = now_ms();
+        if (now >= next_account_check_ms_) {
+            check_accounts();
+            next_account_check_ms_ = now + cfg_.account_check_ms;
+        }
         std::vector<int> dead;
         for (auto& [fd, c] : conns_) {
             if (!c->closing) {
@@ -295,6 +299,7 @@ void FsdServer::handle_login(Conn& c, char kind, const std::vector<std::string>&
     if (proto < 9) return fail(ERR_REVISION, "Invalid protocol revision");
     auto member = accounts_.authenticate(cid, password);
     if (!member) return fail(ERR_CIDINVALID, "Invalid CID/password");
+    if (member->suspended) return fail(ERR_CSSUSPEND, "CID suspended");
     if (find(cs)) return fail(ERR_CSINUSE, "Callsign in use");
     if (!pilot && (rating < OBS || rating > member->rating))
         return fail(ERR_LEVEL, "Requested level too high");
@@ -530,6 +535,24 @@ Conn* FsdServer::find(const std::string& callsign) {
     for (auto& [fd, o] : conns_)
         if (o->role != Role::None && !o->closing && o->callsign == callsign) return o.get();
     return nullptr;
+}
+
+void FsdServer::check_accounts() {
+    for (auto& [fd, c] : conns_) {
+        if (c->closing || c->role == Role::None) continue;
+        auto m = accounts_.lookup(c->member.cid);
+        if (!m || m->suspended) {
+            log("%s disconnected: CID %s suspended", c->callsign, std::to_string(c->member.cid));
+            send_error(*c, ERR_CSSUSPEND, c->callsign, "CID suspended");
+            drop(*c);
+        } else if (c->role == Role::Atc && m->rating < c->session_rating) {
+            log("%s disconnected: rating lowered to %s", c->callsign, rating_name(m->rating));
+            send_error(*c, ERR_LEVEL, c->callsign, "Rating changed, reconnect");
+            drop(*c);
+        } else {
+            c->member.rating = m->rating;
+        }
+    }
 }
 
 void FsdServer::drop(Conn& c, bool announce) {
