@@ -418,9 +418,16 @@ void FsdServer::handle_text(Conn& c, const std::vector<std::string>& f, const st
 void FsdServer::handle_client_query(Conn& c, const std::vector<std::string>& f, const std::string& raw) {
     if (f.size() < 3) return send_error(c, ERR_SYNTAX, "", "Syntax error");
     std::string to = upper(f[1]);
+    if (to == "@94835") {
+        // Shared controller data (assume, release, scratchpad, cleared level, squawk...): every other ATC client.
+        if (c.role != Role::Atc) return send_error(c, ERR_LEVEL, "", "Controllers only");
+        for (auto& [fd, o] : conns_)
+            if (o.get() != &c && o->role == Role::Atc) send(*o, raw);
+        return;
+    }
     if (to != "SERVER") {
         if (Conn* t = find(to)) send(*t, raw);
-        else if (to != "@94835" && to != "*") send_error(c, ERR_NOSUCHCS, f[1], "No such callsign");
+        else if (to != "*") send_error(c, ERR_NOSUCHCS, f[1], "No such callsign");
         return;
     }
     const std::string& type = f[2];
