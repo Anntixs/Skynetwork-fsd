@@ -5,6 +5,7 @@
 #include <openssl/rand.h>
 #include <sqlite3.h>
 
+#include <algorithm>
 #include <stdexcept>
 #include <vector>
 
@@ -56,6 +57,24 @@ Accounts::Accounts(const std::string& path) {
         " suspended INTEGER NOT NULL DEFAULT 0)";
     if (sqlite3_exec(db_, schema, nullptr, nullptr, nullptr) != SQLITE_OK)
         throw std::runtime_error(sqlite3_errmsg(db_));
+    // Staff ranks used to live in the rating column. Move them to their own column once; the
+    // website (sharing this database) does the same, whichever starts first.
+    if (sqlite3_exec(db_, "BEGIN IMMEDIATE", nullptr, nullptr, nullptr) != SQLITE_OK)
+        throw std::runtime_error(sqlite3_errmsg(db_));
+    bool has_staff = false;
+    {
+        Stmt st(db_, "SELECT COUNT(*) FROM pragma_table_info('members') WHERE name = 'staff_rank'");
+        has_staff = sqlite3_step(st.s) == SQLITE_ROW && sqlite3_column_int(st.s, 0) > 0;
+    }
+    const char* migrate =
+        "ALTER TABLE members ADD COLUMN staff_rank INTEGER NOT NULL DEFAULT 0;"
+        "UPDATE members SET staff_rank = rating, rating = 1 WHERE rating >= 11;";
+    if (!has_staff && sqlite3_exec(db_, migrate, nullptr, nullptr, nullptr) != SQLITE_OK) {
+        std::string err = sqlite3_errmsg(db_);
+        sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr);
+        throw std::runtime_error(err);
+    }
+    sqlite3_exec(db_, "COMMIT", nullptr, nullptr, nullptr);
 }
 
 Accounts::~Accounts() { sqlite3_close(db_); }
@@ -64,18 +83,29 @@ bool Accounts::create(int cid, const std::string& name, const std::string& passw
     unsigned char salt[kSaltLen];
     RAND_bytes(salt, kSaltLen);
     auto hash = derive(password, salt);
-    Stmt st(db_, "INSERT INTO members (cid, name, rating, salt, hash) VALUES (?,?,?,?,?)");
+    bool staff = rating >= SUP;
+    Stmt st(db_, "INSERT INTO members (cid, name, rating, staff_rank, salt, hash) VALUES (?,?,?,?,?,?)");
     sqlite3_bind_int(st.s, 1, cid);
     sqlite3_bind_text(st.s, 2, name.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int(st.s, 3, rating);
-    sqlite3_bind_blob(st.s, 4, salt, kSaltLen, SQLITE_TRANSIENT);
-    sqlite3_bind_blob(st.s, 5, hash.data(), kHashLen, SQLITE_TRANSIENT);
+    sqlite3_bind_int(st.s, 3, staff ? OBS : rating);
+    sqlite3_bind_int(st.s, 4, staff ? rating : 0);
+    sqlite3_bind_blob(st.s, 5, salt, kSaltLen, SQLITE_TRANSIENT);
+    sqlite3_bind_blob(st.s, 6, hash.data(), kHashLen, SQLITE_TRANSIENT);
     return sqlite3_step(st.s) == SQLITE_DONE;
 }
 
 bool Accounts::set_rating(int cid, int rating) {
+    if (rating >= SUP) return set_staff(cid, rating);
     Stmt st(db_, "UPDATE members SET rating=? WHERE cid=?");
     sqlite3_bind_int(st.s, 1, rating);
+    sqlite3_bind_int(st.s, 2, cid);
+    return sqlite3_step(st.s) == SQLITE_DONE && sqlite3_changes(db_) == 1;
+}
+
+bool Accounts::set_staff(int cid, int rank) {
+    if (rank != 0 && rank != SUP && rank != ADM) return false;
+    Stmt st(db_, "UPDATE members SET staff_rank=? WHERE cid=?");
+    sqlite3_bind_int(st.s, 1, rank);
     sqlite3_bind_int(st.s, 2, cid);
     return sqlite3_step(st.s) == SQLITE_DONE && sqlite3_changes(db_) == 1;
 }
@@ -99,7 +129,7 @@ bool Accounts::set_suspended(int cid, bool suspended) {
 }
 
 std::optional<Member> Accounts::authenticate(int cid, const std::string& password) {
-    Stmt st(db_, "SELECT name, rating, salt, hash, suspended FROM members WHERE cid=?");
+    Stmt st(db_, "SELECT name, rating, salt, hash, suspended, staff_rank FROM members WHERE cid=?");
     sqlite3_bind_int(st.s, 1, cid);
     if (sqlite3_step(st.s) != SQLITE_ROW) return std::nullopt;
     if (sqlite3_column_bytes(st.s, 2) != kSaltLen || sqlite3_column_bytes(st.s, 3) != kHashLen)
@@ -111,19 +141,23 @@ std::optional<Member> Accounts::authenticate(int cid, const std::string& passwor
     Member m;
     m.cid = cid;
     m.name = reinterpret_cast<const char*>(sqlite3_column_text(st.s, 0));
-    m.rating = sqlite3_column_int(st.s, 1);
+    m.controller_rating = sqlite3_column_int(st.s, 1);
+    m.staff_rank = sqlite3_column_int(st.s, 5);
+    m.rating = std::max(m.controller_rating, m.staff_rank);
     m.suspended = sqlite3_column_int(st.s, 4) != 0;
     return m;
 }
 
 std::optional<Member> Accounts::lookup(int cid) {
-    Stmt st(db_, "SELECT name, rating, suspended FROM members WHERE cid=?");
+    Stmt st(db_, "SELECT name, rating, suspended, staff_rank FROM members WHERE cid=?");
     sqlite3_bind_int(st.s, 1, cid);
     if (sqlite3_step(st.s) != SQLITE_ROW) return std::nullopt;
     Member m;
     m.cid = cid;
     m.name = reinterpret_cast<const char*>(sqlite3_column_text(st.s, 0));
-    m.rating = sqlite3_column_int(st.s, 1);
+    m.controller_rating = sqlite3_column_int(st.s, 1);
+    m.staff_rank = sqlite3_column_int(st.s, 3);
+    m.rating = std::max(m.controller_rating, m.staff_rank);
     m.suspended = sqlite3_column_int(st.s, 2) != 0;
     return m;
 }

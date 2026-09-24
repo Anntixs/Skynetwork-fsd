@@ -123,6 +123,34 @@ class FsdTest(Network):
         c.close()
         self.admin("rating", "1000006", "C1")
 
+    def test_staff_rank_is_apart_from_controller_rating(self):
+        # A supervisor who is a C1 controller: connects up to SUP, may broadcast.
+        self.admin("adduser", "1000007", "Staff Member", "pw7", "C1")
+        self.admin("staff", "1000007", "SUP")
+        sup = self.atc("SKY_SUP", 1000007, "pw7", 11)
+        self.assertTrue(sup.recv().startswith("#TMSERVER:SKY_SUP:"))
+        sup.close()
+        # Rank taken away: the controller rating stays, supervisor level is refused.
+        self.admin("staff", "1000007", "NONE")
+        again = self.atc("SKY_SUP", 1000007, "pw7", 11)
+        self.assertIn(":011:", again.recv())
+        again.close()
+        c1 = self.atc("UUWV_CTR", 1000007, "pw7", 5)
+        self.assertTrue(c1.recv().startswith("#TMSERVER:UUWV_CTR:"))
+        c1.close()
+
+    def test_old_database_is_migrated(self):
+        import sqlite3
+        path = os.path.join(self.tmp.name, "old.db")
+        with sqlite3.connect(path) as db:
+            db.execute("CREATE TABLE members (cid INTEGER PRIMARY KEY, name TEXT NOT NULL, rating INTEGER NOT NULL DEFAULT 1,"
+                       " salt BLOB NOT NULL, hash BLOB NOT NULL, suspended INTEGER NOT NULL DEFAULT 0)")
+            db.execute("INSERT INTO members VALUES (1, 'Admin', 12, x'00', x'00', 0), (2, 'Controller', 5, x'00', x'00', 0)")
+        subprocess.run([os.path.join(BUILD, "skynet-admin"), "--db", path, "passwd", "1", "x"], check=True, capture_output=True)
+        with sqlite3.connect(path) as db:
+            rows = db.execute("SELECT cid, rating, staff_rank FROM members ORDER BY cid").fetchall()
+        self.assertEqual(rows, [(1, 1, 12), (2, 5, 0)])
+
     def test_bad_password(self):
         c = FsdClient(self.port)
         c.send("#APAFL1:SERVER:1000001:nope:1:100:1:X")
