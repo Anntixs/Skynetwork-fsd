@@ -1,4 +1,5 @@
 // skynet-fsd: SkyNetwork Flight Simulator Daemon.
+#include <algorithm>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
@@ -25,10 +26,11 @@ int main(int argc, char** argv) {
         else if (a == "--http-port") cfg.http_port = static_cast<uint16_t>(std::atoi(next().c_str()));
         else if (a == "--name") cfg.server_name = next();
         else if (a == "--motd") cfg.motd = {next()};
+        else if (a == "--account-check") cfg.account_check_ms = std::max(1, std::atoi(next().c_str())) * 1000;
         else {
             std::fprintf(stderr,
                          "usage: skynet-fsd [--db FILE] [--host ADDR] [--port 6809] [--http-port 8080]\n"
-                         "                  [--name NAME] [--motd TEXT]\n");
+                         "                  [--name NAME] [--motd TEXT] [--account-check SECONDS]\n");
             return 2;
         }
     }

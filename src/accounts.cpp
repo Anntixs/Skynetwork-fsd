@@ -107,12 +107,24 @@ std::optional<Member> Accounts::authenticate(int cid, const std::string& passwor
     auto salt = static_cast<const unsigned char*>(sqlite3_column_blob(st.s, 2));
     auto stored = sqlite3_column_blob(st.s, 3);
     auto hash = derive(password, salt);
-    if (sqlite3_column_int(st.s, 4) != 0 || CRYPTO_memcmp(hash.data(), stored, kHashLen) != 0)
-        return std::nullopt;
+    if (CRYPTO_memcmp(hash.data(), stored, kHashLen) != 0) return std::nullopt;
     Member m;
     m.cid = cid;
     m.name = reinterpret_cast<const char*>(sqlite3_column_text(st.s, 0));
     m.rating = sqlite3_column_int(st.s, 1);
+    m.suspended = sqlite3_column_int(st.s, 4) != 0;
+    return m;
+}
+
+std::optional<Member> Accounts::lookup(int cid) {
+    Stmt st(db_, "SELECT name, rating, suspended FROM members WHERE cid=?");
+    sqlite3_bind_int(st.s, 1, cid);
+    if (sqlite3_step(st.s) != SQLITE_ROW) return std::nullopt;
+    Member m;
+    m.cid = cid;
+    m.name = reinterpret_cast<const char*>(sqlite3_column_text(st.s, 0));
+    m.rating = sqlite3_column_int(st.s, 1);
+    m.suspended = sqlite3_column_int(st.s, 2) != 0;
     return m;
 }
 
