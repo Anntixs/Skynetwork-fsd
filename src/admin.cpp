@@ -11,7 +11,9 @@ static int usage() {
     std::fprintf(stderr,
                  "usage: skynet-admin [--db FILE] COMMAND\n"
                  "  adduser CID NAME PASSWORD [RATING]\n"
-                 "  rating CID RATING        (OBS S1 S2 S3 C1 C2 C3 I1 I2 I3 SUP ADM)\n"
+                 "  rating CID RATING        controller rating: OBS S1 S2 S3 C1 C2 C3 I1 I2 I3\n"
+                 "                           (SUP or ADM here sets the staff rank, as 'staff')\n"
+                 "  staff CID RANK           staff rank: SUP ADM NONE\n"
                  "  passwd CID PASSWORD\n"
                  "  suspend CID | unsuspend CID\n");
     return 2;
@@ -36,6 +38,10 @@ int main(int argc, char** argv) {
     } else if (cmd == "rating" && argc - i >= 3) {
         int rating = rating_from_name(argv[i + 2]);
         ok = rating && acc.set_rating(cid, rating);
+    } else if (cmd == "staff" && argc - i >= 3) {
+        std::string rank = argv[i + 2];
+        int r = rank == "NONE" ? 0 : rating_from_name(rank);
+        ok = (r == 0 || r >= SUP) && acc.set_staff(cid, r);
     } else if (cmd == "passwd" && argc - i >= 3) {
         ok = acc.set_password(cid, argv[i + 2]);
     } else if (cmd == "suspend" || cmd == "unsuspend") {

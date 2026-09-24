@@ -22,7 +22,9 @@ cmake -B build && cmake --build build -j
 ./build/skynet-fsd --db skynetwork.db --port 6809 --http-port 8080
 ```
 
-`skynet-admin` умеет: `adduser CID NAME PASSWORD [RATING]`, `rating CID RATING`, `passwd CID PASSWORD`, `suspend CID`, `unsuspend CID`.
+`skynet-admin` умеет: `adduser CID NAME PASSWORD [RATING]`, `rating CID RATING`, `staff CID SUP|ADM|NONE`, `passwd CID PASSWORD`, `suspend CID`, `unsuspend CID`.
+
+**Рейтинг и звание — раздельно.** Диспетчерский рейтинг (OBS…I3) хранится в `members.rating`, звание команды (SUP, ADM) — в `members.staff_rank`. У супервайзера есть и свой диспетчерский рейтинг. Подключиться к сети можно с уровнем не выше старшего из двух, поэтому супервайзер входит как SUP, а права супервайзера (рассылка `*`, `*S`) даёт звание. Старые базы, где SUP/ADM лежали в `rating`, переносятся автоматически при первом запуске. `rating CID SUP|ADM` по-прежнему работает и ставит звание.
 
 ## Тесты
 
