@@ -414,8 +414,8 @@ void FsdServer::handle_text(Conn& c, const std::vector<std::string>& f, const st
                 delivered++;
             }
         send(c, "#TMSERVER:" + c.callsign + ":" +
-                (delivered > 0 ? "Вызов супервайзера отправлен, получателей: " + std::to_string(delivered)
-                               : std::string("Сейчас в сети нет супервайзеров. Попробуйте позже или напишите в поддержку на сайте")));
+                (delivered > 0 ? "Supervisor call sent, recipients: " + std::to_string(delivered)
+                               : std::string("No supervisors are online right now. Try again later or contact support on the website")));
     } else if (to[0] == '@') {
         // Radio message: everyone within range of the sender.
         for (auto& [fd, o] : conns_)

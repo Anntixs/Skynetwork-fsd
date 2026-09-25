@@ -234,7 +234,7 @@ class FsdTest(Network):
             # The next server text that answers the call (the welcome lines are skipped).
             while True:
                 line = client.expect("#TMSERVER")
-                if "супервайзер" in line:
+                if "upervisor" in line:
                     return line
 
         pilot = self.pilot("AFL700", 1000001, "pw1")
@@ -242,17 +242,17 @@ class FsdTest(Network):
         for _ in range(20):
             pilot.send("#TMAFL700:*S:need help")
             reply = server_reply(pilot)
-            if "нет супервайзеров" in reply:
+            if "No supervisors" in reply:
                 break
             time.sleep(0.1)
-        self.assertIn("нет супервайзеров", reply)
+        self.assertIn("No supervisors", reply)
 
         sup = self.atc("UUWV_SUP", 1000004, "pw4", rating=11)
         self.assertTrue(sup.recv().startswith("#TMSERVER:UUWV_SUP:"))
         other = self.pilot("SBI701", 1000002, "pw2")
         pilot.send("#TMAFL700:*S:need help")
         self.assertEqual(sup.expect("#TMAFL700"), "#TMAFL700:*S:need help")
-        self.assertIn("получателей: 1", server_reply(pilot))
+        self.assertIn("recipients: 1", server_reply(pilot))
         # Only supervisors get it: the pilot's next text is the marker, not the call.
         pilot.send("#TMAFL700:SBI701:marker")
         self.assertEqual(other.expect("#TMAFL700"), "#TMAFL700:SBI701:marker")
