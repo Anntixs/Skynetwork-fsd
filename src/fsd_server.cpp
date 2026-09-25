@@ -406,8 +406,16 @@ void FsdServer::handle_text(Conn& c, const std::vector<std::string>& f, const st
         if (c.member.rating < SUP) return send_error(c, ERR_LEVEL, "", "Broadcast requires supervisor");
         broadcast(raw, &c);
     } else if (to == "*S") {
+        // A call for a supervisor (.wallop). The sender is told whether anyone got it.
+        int delivered = 0;
         for (auto& [fd, o] : conns_)
-            if (o.get() != &c && o->role != Role::None && o->member.rating >= SUP) send(*o, raw);
+            if (o.get() != &c && o->role != Role::None && o->member.rating >= SUP) {
+                send(*o, raw);
+                delivered++;
+            }
+        send(c, "#TMSERVER:" + c.callsign + ":" +
+                (delivered > 0 ? "Вызов супервайзера отправлен, получателей: " + std::to_string(delivered)
+                               : std::string("Сейчас в сети нет супервайзеров. Попробуйте позже или напишите в поддержку на сайте")));
     } else if (to[0] == '@') {
         // Radio message: everyone within range of the sender.
         for (auto& [fd, o] : conns_)
