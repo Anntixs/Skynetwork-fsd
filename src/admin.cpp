@@ -14,7 +14,6 @@ static int usage() {
                  "  rating CID RATING        controller rating: OBS S1 S2 S3 C1 C2 C3 I1 I2 I3\n"
                  "                           (SUP or ADM here sets the staff rank, as 'staff')\n"
                  "  staff CID RANK           staff rank: SUP ADM NONE\n"
-                 "  fsup CID on|off          facility supervisor\n"
                  "  passwd CID PASSWORD\n"
                  "  suspend CID | unsuspend CID\n");
     return 2;
@@ -43,9 +42,6 @@ int main(int argc, char** argv) {
         std::string rank = argv[i + 2];
         int r = rank == "NONE" ? 0 : rating_from_name(rank);
         ok = (r == 0 || r >= SUP) && acc.set_staff(cid, r);
-    } else if (cmd == "fsup" && argc - i >= 3) {
-        std::string v = argv[i + 2];
-        ok = (v == "on" || v == "off") && acc.set_facility_supervisor(cid, v == "on");
     } else if (cmd == "passwd" && argc - i >= 3) {
         ok = acc.set_password(cid, argv[i + 2]);
     } else if (cmd == "suspend" || cmd == "unsuspend") {
