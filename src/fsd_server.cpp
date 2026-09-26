@@ -406,10 +406,10 @@ void FsdServer::handle_text(Conn& c, const std::vector<std::string>& f, const st
         if (c.member.rating < SUP) return send_error(c, ERR_LEVEL, "", "Broadcast requires supervisor");
         broadcast(raw, &c);
     } else if (to == "*S") {
-        // A call for a supervisor (.wallop). The sender is told whether anyone got it.
+        // A call for a supervisor (.wallop), facility supervisors included. The sender is told whether anyone got it.
         int delivered = 0;
         for (auto& [fd, o] : conns_)
-            if (o.get() != &c && o->role != Role::None && o->member.rating >= SUP) {
+            if (o.get() != &c && o->role != Role::None && o->member.staff_level() >= 1) {
                 send(*o, raw);
                 delivered++;
             }
@@ -444,6 +444,7 @@ void FsdServer::handle_client_query(Conn& c, const std::vector<std::string>& f, 
         return;
     }
     const std::string& type = f[2];
+    if (handle_staff_command(c, upper(type), f)) return;
     if (type == "FP" && f.size() > 3) {
         Conn* p = find(upper(f[3]));
         if (!p || p->role != Role::Pilot) return send_error(c, ERR_NOSUCHCS, f[3], "No such callsign");
@@ -455,6 +456,149 @@ void FsdServer::handle_client_query(Conn& c, const std::vector<std::string>& f, 
         send(c, std::string("$CRSERVER:") + c.callsign + ":ATC:" + (c.session_rating >= S1 ? "Y" : "N") + ":" +
                     c.callsign);
     }
+}
+
+void FsdServer::server_text(Conn& c, const std::string& text) { send(c, "#TMSERVER:" + c.callsign + ":" + text); }
+
+namespace {
+
+// Text after the first `from` fields, joined back (a reason may contain ':').
+std::string join_from(const std::vector<std::string>& f, size_t from) {
+    std::string out;
+    for (size_t i = from; i < f.size(); ++i) out += (i > from ? ":" : "") + f[i];
+    size_t b = out.find_first_not_of(' '), e = out.find_last_not_of(' ');
+    return b == std::string::npos ? "" : out.substr(b, e - b + 1);
+}
+
+std::string hhmm(time_t t) {
+    char buf[16];
+    strftime(buf, sizeof buf, "%H:%Mz", gmtime(&t));
+    return buf;
+}
+
+std::string role_text(const Conn& c) {
+    if (c.role == Role::Pilot) return "pilot";
+    std::string r = std::string("controller ") + rating_name(c.session_rating);
+    if (c.member.staff_level() > 0) r += std::string(", ") + staff_level_name(c.member.staff_level());
+    return r;
+}
+
+}  // namespace
+
+// Commands for facility supervisors (FSUP), supervisors (SUP) and administrators (ADM). A member may act
+// on another only if that member ranks lower (an administrator on anyone but themselves).
+bool FsdServer::handle_staff_command(Conn& c, const std::string& type, const std::vector<std::string>& f) {
+    static const char* kTypes[] = {"KILL", "FIND", "WHOIS", "WARN", "STAFF", "ONLINE"};
+    if (std::find(std::begin(kTypes), std::end(kTypes), type) == std::end(kTypes)) return false;
+    int level = c.member.staff_level();
+    if (level < 1) {
+        send_error(c, ERR_LEVEL, "", "Supervisors only");
+        return true;
+    }
+    // Target: a callsign, or a CID (digits) for WHOIS/FIND.
+    auto target = [&]() -> Conn* {
+        if (f.size() < 4 || f[3].empty()) return nullptr;
+        std::string t = upper(f[3]);
+        int cid = 0;
+        if (type != "KILL" && type != "WARN" && parse_int(t, cid)) {
+            for (auto& [fd, o] : conns_)
+                if (o->role != Role::None && !o->closing && o->member.cid == cid) return o.get();
+            return nullptr;
+        }
+        return find(t);
+    };
+    auto may_act_on = [&](const Conn& t) {
+        if (&t == &c) return false;
+        return level == 3 || t.member.staff_level() < level;
+    };
+
+    if (type == "KILL" || type == "WARN") {
+        Conn* t = target();
+        std::string text = join_from(f, 4);
+        if (f.size() < 4 || text.empty()) {
+            server_text(c, type == "KILL" ? "Usage: .kill CALLSIGN reason" : "Usage: .warn CALLSIGN text");
+            return true;
+        }
+        if (!t) {
+            send_error(c, ERR_NOSUCHCS, f[3], "No such callsign");
+            return true;
+        }
+        if (!may_act_on(*t)) {
+            server_text(c, "You cannot " + std::string(type == "KILL" ? "disconnect " : "warn ") + t->callsign +
+                               ": they rank the same as you or higher");
+            return true;
+        }
+        std::string who = t->callsign + " (CID " + std::to_string(t->member.cid) + ")";
+        if (type == "WARN") {
+            server_text(*t, "Warning from supervisor " + c.callsign + ": " + text);
+            server_text(c, "Warning sent to " + t->callsign);
+            accounts_.audit(c.member.cid, "network-warn", who, text + " (by " + c.callsign + ")");
+            log("%s warned %s", c.callsign, t->callsign);
+            return true;
+        }
+        server_text(*t, "You have been disconnected from the network by supervisor " + c.callsign + ". Reason: " + text);
+        send(*t, "$!!SERVER:" + t->callsign + ":" + text);
+        accounts_.audit(c.member.cid, "network-kill", who, text + " (by " + c.callsign + ")");
+        log("%s disconnected by %s", t->callsign, c.callsign);
+        drop(*t);
+        server_text(c, who + " disconnected");
+        return true;
+    }
+    if (type == "FIND" || type == "WHOIS") {
+        Conn* t = target();
+        if (!t) {
+            if (f.size() < 4 || f[3].empty()) server_text(c, "Usage: ." + std::string(type == "FIND" ? "find" : "whois") + " CALLSIGN");
+            else send_error(c, ERR_NOSUCHCS, f[3], "No such callsign");
+            return true;
+        }
+        if (type == "FIND") {
+            if (!t->has_pos) {
+                server_text(c, t->callsign + " is online but has not sent a position yet");
+                return true;
+            }
+            send(c, "$CRSERVER:" + c.callsign + ":FIND:" + t->callsign + ":" + fmt_double(t->lat) + ":" +
+                        fmt_double(t->lon) + ":" + std::to_string(t->alt));
+            return true;
+        }
+        std::string info = t->callsign + ": " + t->member.name + ", CID " + std::to_string(t->member.cid) + ", " +
+                           role_text(*t) + ", online since " + hhmm(t->logon_time);
+        if (t->role == Role::Pilot) {
+            if (!t->sim_or_client.empty()) info += ", sim " + t->sim_or_client;
+            auto fp = split(t->flightplan, ':');
+            if (fp.size() > 8) info += ", " + fp[2] + " " + fp[4] + "-" + fp[8];
+            if (t->has_pos) info += ", FL" + std::to_string(t->alt / 100) + " GS " + std::to_string(t->gs) + " sq " + t->squawk;
+        } else if (t->frequency > 0) {
+            char freq[16];
+            std::snprintf(freq, sizeof freq, "%.3f", t->frequency);
+            info += std::string(", ") + freq;
+        }
+        if (level == 3) info += ", IP " + t->ip;
+        server_text(c, info);
+        return true;
+    }
+    if (type == "STAFF") {
+        std::string list;
+        for (auto& [fd, o] : conns_)
+            if (o->role != Role::None && !o->closing && o->member.staff_level() > 0)
+                list += (list.empty() ? "" : ", ") + o->callsign + " (" + staff_level_name(o->member.staff_level()) + ")";
+        server_text(c, "Staff online: " + list);
+        return true;
+    }
+    // ONLINE: counts and the controllers.
+    int pilots = 0;
+    std::string atc;
+    for (auto& [fd, o] : conns_) {
+        if (o->role == Role::None || o->closing) continue;
+        if (o->role == Role::Pilot) {
+            pilots++;
+        } else {
+            char freq[16];
+            std::snprintf(freq, sizeof freq, "%.3f", o->frequency);
+            atc += (atc.empty() ? "" : ", ") + o->callsign + (o->frequency > 0 ? std::string(" ") + freq : "");
+        }
+    }
+    server_text(c, "Online: " + std::to_string(pilots) + " pilots. Controllers: " + (atc.empty() ? "none" : atc));
+    return true;
 }
 
 void FsdServer::on_http(Conn& c) {
@@ -559,6 +703,8 @@ void FsdServer::check_accounts() {
             drop(*c);
         } else {
             c->member.rating = m->rating;
+            c->member.staff_rank = m->staff_rank;
+            c->member.facility_supervisor = m->facility_supervisor;
         }
     }
 }
