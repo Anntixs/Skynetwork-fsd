@@ -67,6 +67,9 @@ private:
     void handle_packet(Conn& c, const std::string& head, const std::vector<std::string>& f);
     void handle_text(Conn& c, const std::vector<std::string>& f, const std::string& raw);
     void handle_client_query(Conn& c, const std::vector<std::string>& f, const std::string& raw);
+    // Supervisor commands ($CQ<cs>:SERVER:KILL|FIND|WHOIS|WARN|STAFF|ONLINE:...). True if `type` is one.
+    bool handle_staff_command(Conn& c, const std::string& type, const std::vector<std::string>& f);
+    void server_text(Conn& c, const std::string& text);
 
     void send(Conn& c, const std::string& line);
     void send_error(Conn& c, int code, const std::string& param, const std::string& text);

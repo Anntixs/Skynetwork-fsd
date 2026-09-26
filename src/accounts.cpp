@@ -6,6 +6,7 @@
 #include <sqlite3.h>
 
 #include <algorithm>
+#include <ctime>
 #include <stdexcept>
 #include <vector>
 
@@ -54,7 +55,11 @@ Accounts::Accounts(const std::string& path) {
         " cid INTEGER PRIMARY KEY, name TEXT NOT NULL,"
         " rating INTEGER NOT NULL DEFAULT 1,"
         " salt BLOB NOT NULL, hash BLOB NOT NULL,"
-        " suspended INTEGER NOT NULL DEFAULT 0)";
+        " suspended INTEGER NOT NULL DEFAULT 0);"
+        // Shared with the website, which creates it the same way.
+        "CREATE TABLE IF NOT EXISTS audit_log ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT, actor_cid INTEGER NOT NULL, action TEXT NOT NULL,"
+        " target TEXT NOT NULL DEFAULT '', details TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL)";
     if (sqlite3_exec(db_, schema, nullptr, nullptr, nullptr) != SQLITE_OK)
         throw std::runtime_error(sqlite3_errmsg(db_));
     // Staff ranks used to live in the rating column. Move them to their own column once; the
@@ -126,6 +131,19 @@ bool Accounts::set_suspended(int cid, bool suspended) {
     sqlite3_bind_int(st.s, 1, suspended ? 1 : 0);
     sqlite3_bind_int(st.s, 2, cid);
     return sqlite3_step(st.s) == SQLITE_DONE && sqlite3_changes(db_) == 1;
+}
+
+void Accounts::audit(int actor_cid, const std::string& action, const std::string& target, const std::string& details) {
+    try {
+        Stmt st(db_, "INSERT INTO audit_log (actor_cid, action, target, details, created_at) VALUES (?,?,?,?,?)");
+        sqlite3_bind_int(st.s, 1, actor_cid);
+        sqlite3_bind_text(st.s, 2, action.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(st.s, 3, target.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(st.s, 4, details.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(st.s, 5, static_cast<sqlite3_int64>(time(nullptr)));
+        sqlite3_step(st.s);
+    } catch (const std::exception&) {
+    }
 }
 
 std::optional<Member> Accounts::authenticate(int cid, const std::string& password) {

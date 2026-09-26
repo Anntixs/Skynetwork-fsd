@@ -259,6 +259,89 @@ class FsdTest(Network):
         for x in (pilot, sup, other):
             x.close()
 
+    def test_supervisor_commands(self):
+        import sqlite3
+        self.admin("adduser", "1000010", "Second Sup", "pw10", "C1")
+        self.admin("staff", "1000010", "SUP")
+        self.admin("adduser", "1000011", "Network Sup", "pw11", "C1")
+        self.admin("staff", "1000011", "SUP")
+        self.admin("adduser", "1000012", "Network Admin", "pw12", "C1")
+        self.admin("staff", "1000012", "ADM")
+
+        def reply(client, word):
+            while True:
+                line = client.expect("#TMSERVER")
+                if word in line:
+                    return line
+
+        # Supervisor positions need the rank.
+        fake = self.atc("UUEE_SUP", 1000003, "pw3", 4)
+        self.assertIn(":011:", fake.recv())
+        fake.close()
+        fake = self.atc("SKY_ADM", 1000011, "pw11", 11)
+        self.assertIn(":011:", fake.recv())
+        fake.close()
+
+        sup2 = self.atc("SKY3_SUP", 1000010, "pw10", 11)
+        sup = self.atc("SKY1_SUP", 1000011, "pw11", 11)
+        adm = self.atc("SKY_ADM", 1000012, "pw12", 12)
+        pilot = self.pilot("AFL800", 1000001, "pw1")
+        pilot.send("@N:AFL800:2000:1:55.98:37.40:3500:180:0:0")
+        time.sleep(0.2)
+
+        # Members without a staff rank get nothing.
+        pilot.send("$CQAFL800:SERVER:WHOIS:SKY1_SUP")
+        self.assertIn(":011:", pilot.expect("$ER"))
+
+        # WHOIS by callsign and by CID; only an administrator sees the IP.
+        sup.send("$CQSKY1_SUP:SERVER:WHOIS:AFL800")
+        line = reply(sup, "AFL800:")
+        self.assertIn("CID 1000001", line)
+        self.assertNotIn("IP ", line)
+        adm.send("$CQSKY_ADM:SERVER:WHOIS:1000001")
+        self.assertIn("IP 127.0.0.1", reply(adm, "AFL800:"))
+
+        # FIND answers with the position, anywhere on the network.
+        sup.send("$CQSKY1_SUP:SERVER:FIND:afl800")
+        self.assertEqual(sup.expect("$CRSERVER"), "$CRSERVER:SKY1_SUP:FIND:AFL800:55.980000:37.400000:3500")
+
+        sup.send("$CQSKY1_SUP:SERVER:STAFF")
+        staff = reply(sup, "Staff online")
+        for part in ("SKY3_SUP (SUP)", "SKY1_SUP (SUP)", "SKY_ADM (ADM)"):
+            self.assertIn(part, staff)
+        sup.send("$CQSKY1_SUP:SERVER:ONLINE")
+        self.assertIn("pilots", reply(sup, "Online:"))
+
+        # A supervisor does not act on other supervisors or administrators; a reason is required.
+        sup.send("$CQSKY1_SUP:SERVER:KILL:SKY3_SUP:test")
+        self.assertIn("cannot disconnect SKY3_SUP", reply(sup, "cannot"))
+        sup.send("$CQSKY1_SUP:SERVER:KILL:SKY_ADM:test")
+        self.assertIn("cannot disconnect", reply(sup, "cannot"))
+        sup.send("$CQSKY1_SUP:SERVER:KILL:AFL800")
+        self.assertIn("Usage", reply(sup, "Usage"))
+
+        sup.send("$CQSKY1_SUP:SERVER:WARN:AFL800:follow ATC instructions")
+        self.assertIn("Warning from supervisor SKY1_SUP: follow ATC instructions", reply(pilot, "Warning"))
+
+        sup.send("$CQSKY1_SUP:SERVER:KILL:AFL800:ignoring ATC: repeatedly")
+        self.assertIn("Reason: ignoring ATC: repeatedly", reply(pilot, "disconnected"))
+        self.assertEqual(pilot.expect("$!!"), "$!!SERVER:AFL800:ignoring ATC: repeatedly")
+        with self.assertRaises(ConnectionError):
+            pilot.expect("never")
+        self.assertIn("AFL800 (CID 1000001) disconnected", reply(sup, "disconnected"))
+        self.assertTrue(adm.expect("#DP").startswith("#DPAFL800"))
+        with sqlite3.connect(self.db) as db:
+            row = db.execute("SELECT actor_cid, action, target FROM audit_log WHERE action = 'network-kill'").fetchone()
+        self.assertEqual(row, (1000011, "network-kill", "AFL800 (CID 1000001)"))
+
+        # An administrator may disconnect a supervisor; a supervisor whose rank is taken away is disconnected.
+        adm.send("$CQSKY_ADM:SERVER:KILL:SKY3_SUP:test")
+        self.assertIn("SKY3_SUP (CID 1000010) disconnected", reply(adm, "disconnected"))
+        self.admin("staff", "1000011", "NONE")
+        self.assertIn(":011:", sup.expect("$ER"))  # connected as SUP without the rank any more: disconnected
+        for x in (sup2, sup, adm, pilot):
+            x.close()
+
     def test_ping(self):
         a = self.pilot("AFL500", 1000001, "pw1")
         a.send("$PIAFL500:SERVER:42")

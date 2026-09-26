@@ -23,6 +23,9 @@ struct Member {
     int controller_rating = OBS;  // OBS..I3
     int staff_rank = 0;           // 0, SUP or ADM
     bool suspended = false;
+
+    // Supervisor powers on the network: 0 none, 1 supervisor, 2 administrator.
+    int staff_level() const { return staff_rank == ADM ? 2 : staff_rank == SUP ? 1 : 0; }
 };
 
 class Accounts {
@@ -40,6 +43,8 @@ public:
     bool set_staff(int cid, int rank);
     bool set_password(int cid, const std::string& password);
     bool set_suspended(int cid, bool suspended);
+    // A line in the website's audit log (who did what to whom); failures are ignored.
+    void audit(int actor_cid, const std::string& action, const std::string& target, const std::string& details);
     // The member if the password is right (check `suspended` before letting them in), else nothing.
     std::optional<Member> authenticate(int cid, const std::string& password);
     // Current state of an account (rating, suspension), without a password; nothing if deleted.
