@@ -179,7 +179,7 @@ class FsdTest(Network):
         atc.send("%UUEE_TWR:18100:4:50:4:55.97:37.41:0")
         a = self.pilot("AFL200", 1000001, "pw1")
         b = self.pilot("SBI300", 1000002, "pw2")
-        a.send("@N:AFL200:2000:1:55.98:37.40:3000:180:0:0")
+        a.send("@N:AFL200:2000:1:55.98:37.40:3000:180:3074:0")  # PBH: heading 270, on the ground
         self.assertTrue(atc.expect("@").startswith("@N:AFL200:"))
         b.send("@N:SBI300:2000:1:55.99:37.42:5000:200:0:0")
         self.assertTrue(a.expect("@").startswith("@N:SBI300:"))
@@ -206,6 +206,8 @@ class FsdTest(Network):
         callsigns = {p["callsign"] for p in feed["pilots"]}
         self.assertTrue({"AFL200", "SBI300", "UTA400"} <= callsigns)
         self.assertEqual(feed["controllers"][0]["frequency"], "118.100")
+        afl = next(p for p in feed["pilots"] if p["callsign"] == "AFL200")
+        self.assertEqual((afl["heading"], afl["on_ground"]), (270, True))
 
         b.send("#DPSBI300:1000002")
         self.assertEqual(a.expect("#DP"), "#DPSBI300:1000002")
@@ -341,6 +343,23 @@ class FsdTest(Network):
         self.assertIn(":011:", sup.expect("$ER"))  # connected as SUP without the rank any more: disconnected
         for x in (sup2, sup, adm, pilot):
             x.close()
+
+    def test_unconfirmed_email_cannot_connect(self):
+        import sqlite3
+        self.admin("adduser", "1000020", "New Member", "pw20")
+        with sqlite3.connect(self.db) as db:
+            # The website's table (created here the way the website does, as far as this test needs).
+            db.execute("CREATE TABLE IF NOT EXISTS member_profiles (cid INTEGER PRIMARY KEY, email TEXT, email_verified INTEGER NOT NULL DEFAULT 0)")
+            db.execute("INSERT OR REPLACE INTO member_profiles (cid, email, email_verified) VALUES (1000020, 'new@example.com', 0)")
+        c = FsdClient(self.port)
+        c.send("#APNEW1:SERVER:1000020:pw20:1:100:1:New Member")
+        line = c.recv()
+        self.assertIn(":006:", line)
+        self.assertIn("Email not confirmed", line)
+        c.close()
+        with sqlite3.connect(self.db) as db:
+            db.execute("UPDATE member_profiles SET email_verified = 1 WHERE cid = 1000020")
+        self.pilot("NEW2", 1000020, "pw20").close()
 
     def test_ping(self):
         a = self.pilot("AFL500", 1000001, "pw1")

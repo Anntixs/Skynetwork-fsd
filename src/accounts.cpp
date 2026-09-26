@@ -133,6 +133,17 @@ bool Accounts::set_suspended(int cid, bool suspended) {
     return sqlite3_step(st.s) == SQLITE_DONE && sqlite3_changes(db_) == 1;
 }
 
+// The website keeps member_profiles.email_verified; members created here (no profile) count as confirmed.
+bool Accounts::email_confirmed(int cid) {
+    try {
+        Stmt st(db_, "SELECT email_verified FROM member_profiles WHERE cid=?");
+        sqlite3_bind_int(st.s, 1, cid);
+        return sqlite3_step(st.s) != SQLITE_ROW || sqlite3_column_int(st.s, 0) != 0;
+    } catch (const std::exception&) {
+        return true;  // no website tables in this database
+    }
+}
+
 void Accounts::audit(int actor_cid, const std::string& action, const std::string& target, const std::string& details) {
     try {
         Stmt st(db_, "INSERT INTO audit_log (actor_cid, action, target, details, created_at) VALUES (?,?,?,?,?)");
@@ -163,6 +174,7 @@ std::optional<Member> Accounts::authenticate(int cid, const std::string& passwor
     m.staff_rank = sqlite3_column_int(st.s, 5);
     m.rating = std::max(m.controller_rating, m.staff_rank);
     m.suspended = sqlite3_column_int(st.s, 4) != 0;
+    m.email_unconfirmed = !email_confirmed(cid);
     return m;
 }
 
