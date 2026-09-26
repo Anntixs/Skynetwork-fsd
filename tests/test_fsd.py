@@ -344,6 +344,23 @@ class FsdTest(Network):
         for x in (sup2, sup, adm, pilot):
             x.close()
 
+    def test_unconfirmed_email_cannot_connect(self):
+        import sqlite3
+        self.admin("adduser", "1000020", "New Member", "pw20")
+        with sqlite3.connect(self.db) as db:
+            # The website's table (created here the way the website does, as far as this test needs).
+            db.execute("CREATE TABLE IF NOT EXISTS member_profiles (cid INTEGER PRIMARY KEY, email TEXT, email_verified INTEGER NOT NULL DEFAULT 0)")
+            db.execute("INSERT OR REPLACE INTO member_profiles (cid, email, email_verified) VALUES (1000020, 'new@example.com', 0)")
+        c = FsdClient(self.port)
+        c.send("#APNEW1:SERVER:1000020:pw20:1:100:1:New Member")
+        line = c.recv()
+        self.assertIn(":006:", line)
+        self.assertIn("Email not confirmed", line)
+        c.close()
+        with sqlite3.connect(self.db) as db:
+            db.execute("UPDATE member_profiles SET email_verified = 1 WHERE cid = 1000020")
+        self.pilot("NEW2", 1000020, "pw20").close()
+
     def test_ping(self):
         a = self.pilot("AFL500", 1000001, "pw1")
         a.send("$PIAFL500:SERVER:42")

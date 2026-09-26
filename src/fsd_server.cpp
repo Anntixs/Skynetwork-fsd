@@ -301,6 +301,8 @@ void FsdServer::handle_login(Conn& c, char kind, const std::vector<std::string>&
     auto member = accounts_.authenticate(cid, password);
     if (!member) return fail(ERR_CIDINVALID, "Invalid CID/password");
     if (member->suspended) return fail(ERR_CSSUSPEND, "CID suspended");
+    if (member->email_unconfirmed)
+        return fail(ERR_CIDINVALID, "Email not confirmed: open the link sent to your email when you registered");
     if (find(cs)) return fail(ERR_CSINUSE, "Callsign in use");
     if (!pilot && (rating < OBS || rating > member->rating))
         return fail(ERR_LEVEL, "Requested level too high");
