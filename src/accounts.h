@@ -23,18 +23,10 @@ struct Member {
     int controller_rating = OBS;  // OBS..I3
     int staff_rank = 0;           // 0, SUP or ADM
     bool suspended = false;
-    // Facility supervisor: a website role (staff_roles 'fsup'), below SUP.
-    bool facility_supervisor = false;
 
-    // Supervisor powers on the network: 0 none, 1 facility supervisor, 2 supervisor, 3 administrator.
-    int staff_level() const {
-        if (staff_rank == ADM) return 3;
-        if (staff_rank == SUP) return 2;
-        return facility_supervisor ? 1 : 0;
-    }
+    // Supervisor powers on the network: 0 none, 1 supervisor, 2 administrator.
+    int staff_level() const { return staff_rank == ADM ? 2 : staff_rank == SUP ? 1 : 0; }
 };
-
-const char* staff_level_name(int level);  // "", "FSUP", "SUP", "ADM"
 
 class Accounts {
 public:
@@ -51,8 +43,6 @@ public:
     bool set_staff(int cid, int rank);
     bool set_password(int cid, const std::string& password);
     bool set_suspended(int cid, bool suspended);
-    // Facility supervisor role on or off.
-    bool set_facility_supervisor(int cid, bool on);
     // A line in the website's audit log (who did what to whom); failures are ignored.
     void audit(int actor_cid, const std::string& action, const std::string& target, const std::string& details);
     // The member if the password is right (check `suspended` before letting them in), else nothing.
@@ -61,7 +51,6 @@ public:
     std::optional<Member> lookup(int cid);
 
 private:
-    bool is_facility_supervisor(int cid);
     sqlite3* db_ = nullptr;
 };
 

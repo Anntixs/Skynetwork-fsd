@@ -40,11 +40,6 @@ const char* rating_name(int rating) {
     return (rating >= OBS && rating <= ADM) ? kNames[rating] : "?";
 }
 
-const char* staff_level_name(int level) {
-    static const char* names[] = {"", "FSUP", "SUP", "ADM"};
-    return level >= 0 && level <= 3 ? names[level] : "";
-}
-
 int rating_from_name(const std::string& name) {
     for (int r = OBS; r <= ADM; ++r)
         if (name == kNames[r]) return r;
@@ -61,9 +56,7 @@ Accounts::Accounts(const std::string& path) {
         " rating INTEGER NOT NULL DEFAULT 1,"
         " salt BLOB NOT NULL, hash BLOB NOT NULL,"
         " suspended INTEGER NOT NULL DEFAULT 0);"
-        // Shared with the website, which creates them the same way.
-        "CREATE TABLE IF NOT EXISTS staff_roles ("
-        " cid INTEGER NOT NULL, role TEXT NOT NULL, PRIMARY KEY (cid, role));"
+        // Shared with the website, which creates it the same way.
         "CREATE TABLE IF NOT EXISTS audit_log ("
         " id INTEGER PRIMARY KEY AUTOINCREMENT, actor_cid INTEGER NOT NULL, action TEXT NOT NULL,"
         " target TEXT NOT NULL DEFAULT '', details TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL)";
@@ -140,20 +133,6 @@ bool Accounts::set_suspended(int cid, bool suspended) {
     return sqlite3_step(st.s) == SQLITE_DONE && sqlite3_changes(db_) == 1;
 }
 
-bool Accounts::set_facility_supervisor(int cid, bool on) {
-    if (!lookup(cid)) return false;
-    Stmt st(db_, on ? "INSERT OR IGNORE INTO staff_roles (cid, role) VALUES (?, 'fsup')"
-                    : "DELETE FROM staff_roles WHERE cid=? AND role='fsup'");
-    sqlite3_bind_int(st.s, 1, cid);
-    return sqlite3_step(st.s) == SQLITE_DONE;
-}
-
-bool Accounts::is_facility_supervisor(int cid) {
-    Stmt st(db_, "SELECT 1 FROM staff_roles WHERE cid=? AND role='fsup'");
-    sqlite3_bind_int(st.s, 1, cid);
-    return sqlite3_step(st.s) == SQLITE_ROW;
-}
-
 void Accounts::audit(int actor_cid, const std::string& action, const std::string& target, const std::string& details) {
     try {
         Stmt st(db_, "INSERT INTO audit_log (actor_cid, action, target, details, created_at) VALUES (?,?,?,?,?)");
@@ -184,7 +163,6 @@ std::optional<Member> Accounts::authenticate(int cid, const std::string& passwor
     m.staff_rank = sqlite3_column_int(st.s, 5);
     m.rating = std::max(m.controller_rating, m.staff_rank);
     m.suspended = sqlite3_column_int(st.s, 4) != 0;
-    m.facility_supervisor = is_facility_supervisor(cid);
     return m;
 }
 
@@ -199,7 +177,6 @@ std::optional<Member> Accounts::lookup(int cid) {
     m.staff_rank = sqlite3_column_int(st.s, 3);
     m.rating = std::max(m.controller_rating, m.staff_rank);
     m.suspended = sqlite3_column_int(st.s, 2) != 0;
-    m.facility_supervisor = is_facility_supervisor(cid);
     return m;
 }
 

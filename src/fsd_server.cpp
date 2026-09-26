@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <sstream>
 
@@ -303,6 +304,13 @@ void FsdServer::handle_login(Conn& c, char kind, const std::vector<std::string>&
     if (find(cs)) return fail(ERR_CSINUSE, "Callsign in use");
     if (!pilot && (rating < OBS || rating > member->rating))
         return fail(ERR_LEVEL, "Requested level too high");
+    // Supervisor and administrator positions (XXX_SUP, XXX_ADM) need the staff rank.
+    auto ends_with = [&](const char* suffix) {
+        size_t n = std::strlen(suffix);
+        return cs.size() >= n && cs.compare(cs.size() - n, n, suffix) == 0;
+    };
+    if ((ends_with("_SUP") && member->staff_rank < SUP) || (ends_with("_ADM") && member->staff_rank < ADM))
+        return fail(ERR_LEVEL, "This position needs a supervisor or administrator rank");
 
     c.role = pilot ? Role::Pilot : Role::Atc;
     c.callsign = cs;
@@ -417,7 +425,7 @@ void FsdServer::handle_text(Conn& c, const std::vector<std::string>& f, const st
         if (c.member.rating < SUP) return send_error(c, ERR_LEVEL, "", "Broadcast requires supervisor");
         broadcast(raw, &c);
     } else if (to == "*S") {
-        // A call for a supervisor (.wallop), facility supervisors included. The sender is told whether anyone got it.
+        // A call for a supervisor (.wallop). The sender is told whether anyone got it.
         int delivered = 0;
         for (auto& [fd, o] : conns_)
             if (o.get() != &c && o->role != Role::None && o->member.staff_level() >= 1) {
@@ -490,14 +498,14 @@ std::string hhmm(time_t t) {
 std::string role_text(const Conn& c) {
     if (c.role == Role::Pilot) return "pilot";
     std::string r = std::string("controller ") + rating_name(c.session_rating);
-    if (c.member.staff_level() > 0) r += std::string(", ") + staff_level_name(c.member.staff_level());
+    if (c.member.staff_rank) r += std::string(", ") + rating_name(c.member.staff_rank);
     return r;
 }
 
 }  // namespace
 
-// Commands for facility supervisors (FSUP), supervisors (SUP) and administrators (ADM). A member may act
-// on another only if that member ranks lower (an administrator on anyone but themselves).
+// Commands for supervisors (SUP) and administrators (ADM). A supervisor acts only on members without a
+// staff rank, an administrator on anyone but themselves.
 bool FsdServer::handle_staff_command(Conn& c, const std::string& type, const std::vector<std::string>& f) {
     static const char* kTypes[] = {"KILL", "FIND", "WHOIS", "WARN", "STAFF", "ONLINE"};
     if (std::find(std::begin(kTypes), std::end(kTypes), type) == std::end(kTypes)) return false;
@@ -520,7 +528,7 @@ bool FsdServer::handle_staff_command(Conn& c, const std::string& type, const std
     };
     auto may_act_on = [&](const Conn& t) {
         if (&t == &c) return false;
-        return level == 3 || t.member.staff_level() < level;
+        return level == 2 || t.member.staff_level() < level;
     };
 
     if (type == "KILL" || type == "WARN") {
@@ -583,7 +591,7 @@ bool FsdServer::handle_staff_command(Conn& c, const std::string& type, const std
             std::snprintf(freq, sizeof freq, "%.3f", t->frequency);
             info += std::string(", ") + freq;
         }
-        if (level == 3) info += ", IP " + t->ip;
+        if (level == 2) info += ", IP " + t->ip;
         server_text(c, info);
         return true;
     }
@@ -591,7 +599,7 @@ bool FsdServer::handle_staff_command(Conn& c, const std::string& type, const std
         std::string list;
         for (auto& [fd, o] : conns_)
             if (o->role != Role::None && !o->closing && o->member.staff_level() > 0)
-                list += (list.empty() ? "" : ", ") + o->callsign + " (" + staff_level_name(o->member.staff_level()) + ")";
+                list += (list.empty() ? "" : ", ") + o->callsign + " (" + rating_name(o->member.staff_rank) + ")";
         server_text(c, "Staff online: " + list);
         return true;
     }
@@ -717,7 +725,6 @@ void FsdServer::check_accounts() {
         } else {
             c->member.rating = m->rating;
             c->member.staff_rank = m->staff_rank;
-            c->member.facility_supervisor = m->facility_supervisor;
         }
     }
 }
